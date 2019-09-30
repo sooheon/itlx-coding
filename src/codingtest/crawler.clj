@@ -52,17 +52,20 @@
              :page/title (:title json)})
       {:page/url url :response/status status})))
 
-
-(defn visit-page [hits parsed-pages rel-path]
-  (swap! hits conj rel-path)
-  (swap! parsed-pages conj (parse-page rel-path)))
-
 (defn itinerary
+  "Given atoms holding current list of hits and parsed-pages, return coll of
+   urls to visit next."
   [hits parsed-pages]
   (set/difference (set (mapcat :page/links @parsed-pages))
                   (set @hits)))
 
+(defn- visit-page [hits parsed-pages rel-path]
+  (swap! hits conj rel-path)
+  (swap! parsed-pages conj (parse-page rel-path)))
+
 (defn visit-all-pages!
+  "Given starting relative path (i.e. 'index.json'), visits all linked URLs.
+   Returns a collection of URL hits, and a set of parsed pages."
   [start]
   (let [hits* (atom [start])
         parsed-pages* (atom #{(parse-page start)})]
@@ -84,9 +87,3 @@
              links))
    {}
    parsed-pages))
-
-(comment
- (def pg (:parsed (visit-all-pages! "index.json")))
- (count pg)
- (count-hits pg))
-

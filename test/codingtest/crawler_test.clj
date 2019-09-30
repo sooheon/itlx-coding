@@ -35,3 +35,8 @@
 
 (deftest visit-all-pages!-test
   (is (= 10 (count (:parsed (visit-all-pages! "index.json"))))))
+
+(comment
+ (def pg (:parsed (visit-all-pages! "index.json")))
+ (count pg)
+ (count-hits pg))
