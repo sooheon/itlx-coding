@@ -3,4 +3,5 @@
   datascript {:mvn/version "0.18.5"}
   clj-http {:mvn/version "3.10.0"}
   metosin/jsonista {:mvn/version "0.2.4"}
+  cheshire {:mvn/version "5.9.0"}
   com.cemerick/url {:mvn/version "0.1.1"}}}
