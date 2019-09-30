@@ -15,4 +15,23 @@
                   "data5.json"
                   "data6.json"
                   "data7.json"]}
-         (parse-body-json (get "index.json")))))
+         (parse-json (:body (GET "index.json"))))))
+
+(deftest json-parse-test
+  (let [broken-json "{
+      \"title\": \"Data 3\",
+      \"links\": [
+          \"data1.json\",
+          \"data2.json\",
+          \"data6.json\",,,
+      ]
+  }
+  "]
+    (is (= {:title "Data 3"
+            :links ["data1.json"
+                    "data2.json"
+                    "data6.json"]}
+           (parse-json broken-json)))))
+
+(deftest visit-all-pages!-test
+  (is (= 10 (count (:parsed (visit-all-pages! "index.json"))))))

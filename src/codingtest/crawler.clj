@@ -4,51 +4,89 @@
    [jsonista.core :as j]
    [cemerick.url :refer [url url-encode]]
    [codingtest.utils :as u]
-   [datascript.core :as d]))
+   [clojure.set :as set])
+  (:import (java.net MalformedURLException)))
 
 
-;;;;;;;;;;;;;;;;;;;;
-;; In memory DB
-;;;;;;;;;;;;;;;;;;;;
-
-(def conn (d/create-conn))
-
-(def schema
-  {:page/url {}
-   :page/links {:db/cardinality :db.cardinality/many} ;; page/hits is # of links backwards
-   :response/status {}})
-
-(d/transact conn [schema])
-
+(def root (url "https://tyruiop.org/crawler/"))
 
 ;;;;;;;;;;;;;;;;;;;;
 ;; Crawler
 ;;;;;;;;;;;;;;;;;;;;
 
-(def root
-  (url "https://tyruiop.org/crawler/"))
+(defn- valid-url? [s]
+  (boolean (try
+             (url s)
+             (catch MalformedURLException _
+               false))))
 
-(defn form-url [rel-path]
-  (str (url root rel-path)))
+(defn- make-url [rel-path]
+  (if (valid-url? rel-path)
+    rel-path
+    (str (url root rel-path))))
 
-(def get
+(def GET
   (memoize
    (fn [rel-path]
-     (client/get (form-url rel-path) {:throw-exceptions false}))))
+     (client/get (make-url rel-path) {:throw-exceptions false
+                                      :ignore-unknown-host true}))))
 
-(defn parse-body-json
-  [response]
-  (-> response
-      :body
+(defn parse-json
+  "Parses json body, fixing trailing commas."
+  [json-str]
+  (-> json-str
+      u/json-remove-trailing-comma
       (j/read-value (j/object-mapper {:decode-key-fn true}))))
 
-(defn parse-page [rel-path]
-  (let [url (form-url rel-path)
-        resp (get rel-path)]
-    (case (:status resp)
-      404 {:page/url url :response/status 404}
-      200 (let [json (parse-body-json resp)]
-            {:page/url url :response/status 200
+(defn parse-page
+  "Given relative path fragment, appends it to root to create valid URL (or
+   uses it directly). Parses the HTTP response into map with [:"
+  [rel-path]
+  (let [url (make-url rel-path)
+        resp (GET rel-path)
+        status (:status resp)]
+    (case status
+      200 (let [json (-> resp :body parse-json)]
+            {:page/url url :response/status status
              :page/links (:links json)
-             :page/title (:title json)}))))
+             :page/title (:title json)})
+      {:page/url url :response/status status})))
+
+
+(defn visit-page [hits parsed-pages rel-path]
+  (swap! hits conj rel-path)
+  (swap! parsed-pages conj (parse-page rel-path)))
+
+(defn itinerary
+  [hits parsed-pages]
+  (set/difference (set (mapcat :page/links @parsed-pages))
+                  (set @hits)))
+
+(defn visit-all-pages!
+  [start]
+  (let [hits* (atom [start])
+        parsed-pages* (atom #{(parse-page start)})]
+    (loop [to-visit (itinerary hits* parsed-pages*)]
+      (when-not (empty? to-visit)
+        (u/pmap! (partial visit-page hits* parsed-pages*) to-visit)
+        (recur (itinerary hits* parsed-pages*))))
+    {:hits @hits*
+     :parsed @parsed-pages*}))
+
+(defn count-hits
+  "Given list of parsed paged, counts up hits for each url."
+  [parsed-pages]
+  (reduce
+   (fn [acc {:keys [page/links]}]
+     (reduce (fn [m link]
+               (update m (make-url link) (fnil inc 0)))
+             acc
+             links))
+   {}
+   parsed-pages))
+
+(comment
+ (def pg (:parsed (visit-all-pages! "index.json")))
+ (count pg)
+ (count-hits pg))
 

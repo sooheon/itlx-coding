@@ -1,5 +1,6 @@
 (ns codingtest.utils
-  (:require [clojure.core.async :as a]))
+  (:require [clojure.core.async :as a]
+            [clojure.string :as str]))
 
 
 (defn parallelize
@@ -22,3 +23,8 @@
 (def pfilter! (parallelize filter))
 
 (def pmapcat! (parallelize mapcat))
+
+(defn json-remove-trailing-comma
+  "See: https://stackoverflow.com/questions/34344328/json-remove-trailiing-comma-from-last-object"
+  [s]
+  (str/replace s #"\,(?!\s*?[\{\[\"\'\w])" ""))
