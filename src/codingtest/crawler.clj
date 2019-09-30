@@ -1,17 +1,19 @@
 (ns codingtest.crawler
   (:require
-   [clj-http.client :as client]
-   [jsonista.core :as j]
    [cemerick.url :refer [url url-encode]]
+   [clj-http.client :as client]
+   [clojure.set :as set]
    [codingtest.utils :as u]
-   [clojure.set :as set])
+   [datascript.core :as d]
+   [jsonista.core :as j])
   (:import (java.net MalformedURLException)))
 
 
 (def root (url "https://tyruiop.org/crawler/"))
 
+
 ;;;;;;;;;;;;;;;;;;;;
-;; Crawler
+;; GET and parse
 ;;;;;;;;;;;;;;;;;;;;
 
 (defn- valid-url? [s]
@@ -20,16 +22,15 @@
              (catch MalformedURLException _
                false))))
 
-(defn- make-url [rel-path]
+(defn make-url [rel-path]
   (if (valid-url? rel-path)
     rel-path
     (str (url root rel-path))))
 
 (def GET
   (memoize
-   (fn [rel-path]
-     (client/get (make-url rel-path) {:throw-exceptions false
-                                      :ignore-unknown-host true}))))
+   (fn [url]
+     (client/get url {:throw-exceptions false :ignore-unknown-host true}))))
 
 (defn parse-json
   "Parses json body, fixing trailing commas."
@@ -39,18 +40,23 @@
       (j/read-value (j/object-mapper {:decode-key-fn true}))))
 
 (defn parse-page
-  "Given relative path fragment, appends it to root to create valid URL (or
-   uses it directly). Parses the HTTP response into map with [:"
-  [rel-path]
-  (let [url (make-url rel-path)
-        resp (GET rel-path)
+  "Given URL, parses the HTTP response. Returns map with [:page/url
+  :page/title :response/status :page/links]"
+  [url]
+  (let [resp (GET url)
         status (:status resp)]
     (case status
       200 (let [json (-> resp :body parse-json)]
             {:page/url url :response/status status
-             :page/links (:links json)
+             :page/links (map make-url (:links json))
              :page/title (:title json)})
+      nil {:page/url url}
       {:page/url url :response/status status})))
+
+
+;;;;;;;;;;;;;;;;;;;;
+;; Crawler strategy
+;;;;;;;;;;;;;;;;;;;;
 
 (defn itinerary
   "Given atoms holding current list of hits and parsed-pages, return coll of
@@ -59,13 +65,13 @@
   (set/difference (set (mapcat :page/links @parsed-pages))
                   (set @hits)))
 
-(defn- visit-page [hits parsed-pages rel-path]
-  (swap! hits conj rel-path)
-  (swap! parsed-pages conj (parse-page rel-path)))
+(defn- visit-page [hits parsed-pages url]
+  (swap! hits conj url)
+  (swap! parsed-pages conj (parse-page url)))
 
 (defn visit-all-pages!
-  "Given starting relative path (i.e. 'index.json'), visits all linked URLs.
-   Returns a collection of URL hits, and a set of parsed pages."
+  "Given starting URL, visits all linked URLs. Returns a collection of URL
+   hits, and a set of parsed pages."
   [start]
   (let [hits* (atom [start])
         parsed-pages* (atom #{(parse-page start)})]
@@ -87,3 +93,24 @@
              links))
    {}
    parsed-pages))
+
+
+;;;;;;;;;;;;;;;;;;;;
+;; DB
+;;;;;;;;;;;;;;;;;;;;
+
+(defn new-db-conn []
+  (let [schema {:page/url {:db/unique :db.unique/identity}
+                :page/links {:db/valueType :db.type/ref
+                             :db/cardinality :db.cardinality/many}}]
+    (d/create-conn schema)))
+
+(defn parsed-tx
+  "Creates transaction for adding parsed pages to DB. Turns :page/links into
+   :db.type/ref references to other :page/urls."
+  [parsed]
+  (update parsed
+          :page/links
+          (fn [links]
+            (map (fn [s] {:page/url s})
+                 links))))
